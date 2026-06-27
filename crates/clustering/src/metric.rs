@@ -106,7 +106,13 @@ impl Metric {
     /// For Flop/Turn: Uses Sinkhorn entropic optimal transport.
     /// For River: Uses total variation (integrated CDF difference).
     pub fn emd(&self, source: &Histogram, target: &Histogram) -> Energy {
-        match source.peek().street() {
+        if source.n() == 0 && target.n() == 0 {
+            return 0.;
+        }
+        if source.n() == 0 || target.n() == 0 {
+            return Energy::MAX;
+        }
+        match source.street() {
             Street::Flop | Street::Turn => Sinkhorn::from((source, target, self)).minimize().cost(),
             Street::Rive => Equity::variation(source, target),
             Street::Pref => unreachable!("no preflop emd"),

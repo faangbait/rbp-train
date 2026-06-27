@@ -144,9 +144,9 @@ impl<const K: usize, const N: usize> Elkan<K, N> for Layer<K, N> {
             let i = match WeightedIndex::new(potentials.iter()) {
                 Ok(wi) => wi.sample(rng),
                 Err(_) => {
-                    // All weights zero: remaining histograms identical to selected centroids.
-                    // Pick first unselected index as fallback.
-                    (0..N).find(|&j| !histograms.contains(&self.points()[j])).expect("K <= N")
+                    // All weights zero: all remaining histograms identical to selected centroids.
+                    // Pick any index (duplicates allowed when K > distinct_count).
+                    (0..N).find(|&j| !histograms.contains(&self.points()[j])).unwrap_or(0)
                 }
             };
             let x = self.points()[i];
