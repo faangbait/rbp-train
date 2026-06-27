@@ -12,6 +12,7 @@ categories      = ["algorithms", "command-line-utilities", "concurrency"]
 
 [features]
 default         = []
+server          = ["rbp-mccfr/server", "rbp-nlhe/server"]
 
 [dependencies]
 rbp-core        = { version = "1.0", path = "../util", features = ["server"] }
