@@ -27,25 +27,27 @@ impl PreTraining {
         let streets = Self::pending(client).await;
         for street in streets.iter().cloned() {
             log::info!("{:<32}{:<32}", "beginning clustering", street);
-            Self::cluster(street, client).await.stream(client).await;
+            Self::cluster_and_stream(street, client).await;
         }
         if streets.len() > 0 {
             Self::index(client).await;
         }
         Self::derive::<Abstraction>(client).await;
         Self::derive::<Street>(client).await;
-        log::info!("{:<32}{:<32}", "vacuum analyze", "all tables");
-        client
-            .batch_execute("VACUUM ANALYZE;")
-            .await
-            .expect("vacuum analyze");
+    }
+
+    async fn cluster_and_stream(street: Street, client: &Arc<Client>) {
+        match street {
+            Street::Rive => Lookup::stream_grow(street, client).await,
+            _ => Self::cluster(street, client).await.stream(client).await,
+        }
     }
 
     /// Cluster a street via k-means. Dependencies loaded from postgres.
     /// Dispatches to the appropriate const-generic Layer based on street.
     async fn cluster(street: Street, client: &Arc<Client>) -> Artifacts {
         match street {
-            Street::Rive => Artifacts::from(Lookup::grow(street)),
+            Street::Rive => panic!("river streams via cluster_and_stream"),
             Street::Turn => TurnLayer::cluster(street, client).await,
             Street::Flop => FlopLayer::cluster(street, client).await,
             Street::Pref => PrefLayer::cluster(street, client).await,

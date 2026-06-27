@@ -254,8 +254,10 @@ mod tests {
     }
 
     // Subgame solver convergence tests
-    // Blueprint uses fixed N14 training; subgame varies by iteration count
-    // SubSolver internally uses ExternalSampling + LinearRegret + LinearWeight
+    // Blueprint uses fixed N14 training; subgame varies by iteration count.
+    // SubSolver uses the default SubgameSampling scheme (depth-limited): RPS has
+    // no chance nodes, so it behaves exactly like ExternalSampling here, which
+    // also verifies the new generic sampling seam compiles and converges.
     macro_rules! subgame {
         ($S:ident, $R:ident, $W:ident, $N:expr, $E:expr) => {
             paste::paste! {
@@ -264,7 +266,7 @@ mod tests {
                     type Blueprint = RPS<$R, $W, $S, N14>;
                     let ref blueprint = Blueprint::default().solve();
                     equilibrium(
-                        &SubSolver::<_, _, $N>::new(
+                        &SubSolver::<_, _, $N, SubgameSampling>::new(
                             blueprint,
                             blueprint,
                             RpsTurn::P2,

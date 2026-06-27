@@ -6,8 +6,6 @@ use rbp_mccfr::Posterior;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
-// TODO: Import from rbp-core or define locally
-const SUBGAME_ITERATIONS: usize = 100;
 const CFR_TREE_COUNT_NLHE: usize = 1;
 const CFR_BATCH_SIZE_NLHE: usize = 1000;
 
@@ -70,15 +68,18 @@ where
     }
     /// Creates a subgame solver from game history.
     ///
-    /// Computes opponent reach distribution, clusters into K worlds,
-    /// and initializes the solver from game root through the prefix.
+    /// Computes the joint opponent reach distribution, clusters it into K worlds,
+    /// and initializes the solver from the game root through the prefix.
+    ///
+    /// Works for any configured player count (`2..=9`): the designated villain is
+    /// the next seat to act after hero, and the K-world selector chooses a *joint*
+    /// opponent world (see [`crate::SubGame`]). The prefix is the full root→subgame
+    /// edge history so prefix replay and the reach calculation agree on one edge
+    /// sequence.
     pub fn subgame(
         &self,
         recall: &Partial,
-    ) -> SubSolver<'_, NlheProfile, NlheEncoder, SUBGAME_ITERATIONS> {
-        if rbp_core::n() != 2 {
-            panic!("subgame solving is currently heads-up only");
-        }
+    ) -> SubSolver<'_, NlheProfile, NlheEncoder, { rbp_core::SUBGAME_ITERATIONS }> {
         SubSolver::new(
             &self.encoder,
             &self.profile,
@@ -86,25 +87,23 @@ where
                 Turn::Choice(position) => NlheTurn::from((position + 1) % rbp_core::n()),
                 _ => unreachable!("subgame solving expects a player decision node"),
             },
-            recall.subgame().into_iter().map(NlheEdge::from).collect(),
+            recall.history().into_iter().map(NlheEdge::from).collect(),
             ManyWorlds::cluster(self.opponent_range(recall)),
         )
     }
 
-    /// Computes opponent observation-level range from game history.
+    /// Computes the opponent observation-level range from game history.
     ///
-    /// For each possible opponent observation, constructs a [`Perfect`](crate::gameplay::Perfect)
-    /// (complete info) and computes its reach probability via [`Solver::external_reach`].
+    /// Samples joint opponent assignments via [`Partial::histories`]; for each,
+    /// constructs a [`Perfect`](rbp_gameplay::Perfect) (complete info) and computes
+    /// its joint reach probability via [`Solver::external_reach`] (the product of
+    /// blueprint action probabilities across *all* non-hero seats along the path).
     ///
-    /// Returns a distribution since `Partial` has partial information —
-    /// we must iterate over all possible opponent hands.
-    ///
-    /// Projects observation-level range to abstraction level.
-    /// Aggregates reach by abstraction bucket for clustering into worlds.
+    /// Returns a distribution since `Partial` has partial information — multiway
+    /// opponent hands are unknown and must be sampled. The observation-level range
+    /// is projected to abstraction buckets (keyed by the designated villain) and
+    /// aggregated by reach for clustering into worlds.
     pub fn opponent_range(&self, recall: &Partial) -> Posterior<NlheSecret> {
-        if rbp_core::n() != 2 {
-            panic!("opponent range calculation is currently heads-up only");
-        }
         let hero = NlheTurn::from(recall.turn());
         recall
             .histories()

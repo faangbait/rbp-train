@@ -92,20 +92,26 @@ impl Game {
         }
         self
     }
-    /// Replaces all players' hole cards EXCEPT the given seat.
+    /// Assigns each non-hero seat a distinct hole from `holes`, preserving hero's cards.
     ///
-    /// Used for computing opponent reach: sets all non-hero seats to the
-    /// assumed opponent hole while preserving hero's cards.
+    /// Used for computing multiway opponent reach: the `holes` slice holds one
+    /// (distinct) hand per opponent, consumed in ascending seat order over the
+    /// non-hero seats. For heads-up this is a single-element slice; for N-way it
+    /// is the N-1 opponent assignment sampled from the unseen deck.
     ///
-    /// TODO
-    /// this might be incorrect, i don't know if it takes into considration the relativity of
-    /// dealer position in Turn.
-    pub fn assume(mut self, hero: Turn, hole: Hole) -> Self {
+    /// Holes beyond the number of non-hero seats are ignored; if `holes` is too
+    /// short, the remaining opponent seats keep whatever cards they already hold.
+    pub fn assume(mut self, hero: Turn, holes: &[Hole]) -> Self {
+        let mut holes = holes.iter();
         self.seat_slice_mut()
             .iter_mut()
             .enumerate()
             .filter(|(i, _)| Turn::Choice(*i) != hero)
-            .for_each(|(_, seat)| seat.reset_cards(hole));
+            .for_each(|(_, seat)| {
+                if let Some(hole) = holes.next() {
+                    seat.reset_cards(*hole);
+                }
+            });
         self
     }
     /// Fast-forward to the given street by taking passive actions.

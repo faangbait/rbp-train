@@ -166,18 +166,46 @@ impl Lookup {
     /// - Preflop: Each isomorphism gets its own bucket (no compression)
     pub fn grow(street: Street) -> Self {
         match street {
-            Street::Rive => IsomorphismIterator::from(Street::Rive)
-                .collect::<Vec<_>>()
-                .into_par_iter()
-                .map(|iso| (iso, Abstraction::from(iso.0.equity())))
-                .collect::<BTreeMap<_, _>>()
-                .into(),
+            Street::Rive => panic!("river streams via stream_grow to avoid materializing BTreeMap"),
             Street::Pref => IsomorphismIterator::from(Street::Pref)
                 .enumerate()
                 .map(|(k, iso)| (iso, Abstraction::from((Street::Pref, k))))
                 .collect::<BTreeMap<_, _>>()
                 .into(),
             Street::Flop | Street::Turn => panic!("lookup must be learned via layer for {street}"),
+        }
+    }
+}
+
+#[cfg(feature = "database")]
+impl Lookup {
+    /// Computes and streams a lookup table without holding it in memory.
+    ///
+    /// River enumerates isomorphisms in parallel and COPYs rows directly.
+    pub async fn stream_grow(street: Street, client: &tokio_postgres::Client) {
+        use rbp_database::Streamable;
+        use rbp_database::COPY_BATCH_SIZE;
+        use rayon::iter::ParallelBridge;
+        use rayon::prelude::*;
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+        match street {
+            Street::Rive => {
+                let (tx, rx) = sync_channel(COPY_BATCH_SIZE);
+                thread::spawn(move || {
+                    IsomorphismIterator::from(Street::Rive)
+                        .par_bridge()
+                        .map(|iso| (i64::from(iso), i16::from(Abstraction::from(iso.0.equity()))))
+                        .for_each(|row| {
+                            let _ = tx.send(row);
+                        });
+                });
+                Self::stream_rows(client, rx.into_iter()).await;
+            }
+            Street::Pref => Self::grow(street).stream(client).await,
+            Street::Flop | Street::Turn => {
+                panic!("lookup must be learned via layer for {street}")
+            }
         }
     }
 }

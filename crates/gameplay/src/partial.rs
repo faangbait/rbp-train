@@ -85,18 +85,59 @@ impl Partial {
             .collect()
     }
 
-    /// Iterates over all possible opponent hands.
+    /// Samples joint opponent assignments for the current (multiway) table.
     ///
-    /// For each opponent observation, yields a complete-information
-    /// [`Perfect`] that can compute exact reach probabilities.
-    /// Since `Partial` has partial information (only hero's cards),
-    /// this method enumerates the unknown opponent hands.
+    /// Each sample deals `n - 1` distinct holes to the non-hero seats from the
+    /// unseen deck (cards not in hero's observation), yielding a complete-information
+    /// [`Perfect`] for reach computation. The returned [`Observation`] is the
+    /// designated villain's (next seat to act after hero) hole + current board,
+    /// which keys the world clustering downstream.
+    ///
+    /// Dealing distinct holes from the real deck makes card-removal/blocker
+    /// effects exact by construction, and the Monte Carlo budget keeps this
+    /// tractable for the full 2..=9 range (joint enumeration is infeasible past
+    /// a few opponents). Uses the process RNG; see [`Self::sample_histories`]
+    /// for a seedable variant.
     pub fn histories(&self) -> Vec<(Observation, Perfect)> {
-        self.seen()
-            .opponents()
-            .map(|villain| {
-                let hole = Hole::from(villain.pocket().clone());
-                (villain, Perfect::from((self, hole)))
+        self.sample_histories(rbp_core::RANGE_SAMPLES, &mut rand::rng())
+    }
+
+    /// Seedable joint opponent sampler backing [`Self::histories`].
+    ///
+    /// Draws `count` joint deals of `n - 1` distinct opponent holes using the
+    /// supplied RNG, enabling reproducible tests. Returns `(villain_obs, perfect)`
+    /// pairs; samples are skipped if the unseen deck cannot supply enough cards.
+    pub fn sample_histories(
+        &self,
+        count: usize,
+        rng: &mut impl rand::Rng,
+    ) -> Vec<(Observation, Perfect)> {
+        let n = rbp_core::n();
+        let hero = self.turn();
+        let villain = (hero.position() + 1) % n;
+        let board = self.seen().public().clone();
+        let unseen = Hand::from(self.seen())
+            .complement()
+            .into_iter()
+            .collect::<Vec<Card>>();
+        let needed = 2 * (n - 1);
+        if unseen.len() < needed {
+            return Vec::new();
+        }
+        (0..count)
+            .map(|_| {
+                let mut pool = unseen.clone();
+                let holes = (0..n - 1)
+                    .map(|_| {
+                        let a = pool.swap_remove(rng.random_range(0..pool.len()));
+                        let b = pool.swap_remove(rng.random_range(0..pool.len()));
+                        Hole::from((a, b))
+                    })
+                    .collect::<Vec<Hole>>();
+                let perfect = Perfect::from((self, holes));
+                let villain_hole = perfect.root().seats()[villain].cards();
+                let villain_obs = Observation::from((Hand::from(villain_hole), board.clone()));
+                (villain_obs, perfect)
             })
             .collect()
     }
@@ -764,5 +805,82 @@ mod tests {
         let r = Partial::initial(Turn::Choice(0));
         assert!(r.can_push(&Action::Call(1)));
         assert!(r.can_push(&Action::Check).not());
+    }
+
+    /// Collects every card held across all seats of a perfect-info root,
+    /// asserting (via set insertion) that no card is dealt twice.
+    fn distinct_seat_cards(perfect: &Perfect) -> std::collections::HashSet<u64> {
+        let mut set = std::collections::HashSet::new();
+        for seat in perfect.root().seats() {
+            for card in Hand::from(seat.cards()) {
+                assert!(set.insert(u64::from(card)), "card dealt to two seats");
+            }
+        }
+        set
+    }
+
+    /// Heads-up sampler: each deal preserves hero's hole, draws a distinct villain
+    /// hole from the unseen deck, exposes it as the villain observation, and is
+    /// reproducible under a fixed RNG seed.
+    #[test]
+    fn sample_histories_hu_distinct_and_seeded() {
+        hu_only!();
+        use rand::SeedableRng;
+        let r = Partial::initial(Turn::Choice(0));
+        let hero = Hole::from(r.seen());
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
+        let samples = r.sample_histories(64, &mut rng);
+        assert_eq!(samples.len(), 64);
+        for (obs, perfect) in &samples {
+            let root = perfect.root();
+            let seats = root.seats();
+            assert_eq!(seats.len(), 2);
+            assert_eq!(seats[0].cards(), hero, "hero hole must be preserved");
+            assert_eq!(
+                Hole::from(obs.clone()),
+                seats[1].cards(),
+                "villain observation must expose the next seat's hole"
+            );
+            assert_eq!(distinct_seat_cards(perfect).len(), 4);
+        }
+        // same seed reproduces the same villain holes (reproducible tests)
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
+        let repeat = r.sample_histories(64, &mut rng);
+        let holes = |v: &[(Observation, Perfect)]| {
+            v.iter()
+                .map(|(_, p)| p.root().seats()[1].cards())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(holes(&samples), holes(&repeat));
+    }
+
+    /// Three-handed sampler: each deal assigns two *distinct* opponent holes (and
+    /// hero's), with no card collision across the six dealt cards.
+    #[test]
+    fn sample_histories_n3_distinct_opponents() {
+        n3_only!();
+        use rand::SeedableRng;
+        let r = Partial::initial(Turn::Choice(0));
+        let hero = Hole::from(r.seen());
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(7);
+        let samples = r.sample_histories(32, &mut rng);
+        assert_eq!(samples.len(), 32);
+        for (obs, perfect) in &samples {
+            let root = perfect.root();
+            let seats = root.seats();
+            assert_eq!(seats.len(), 3);
+            assert_eq!(seats[0].cards(), hero, "hero hole must be preserved");
+            assert_ne!(
+                seats[1].cards(),
+                seats[2].cards(),
+                "opponents must hold distinct holes"
+            );
+            assert_eq!(
+                Hole::from(obs.clone()),
+                seats[1].cards(),
+                "villain is the seat acting right after hero"
+            );
+            assert_eq!(distinct_seat_cards(perfect).len(), 6);
+        }
     }
 }

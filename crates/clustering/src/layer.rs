@@ -46,27 +46,22 @@ impl<const K: usize, const N: usize> Layer<K, N> {
 }
 
 impl<const K: usize, const N: usize> Layer<K, N> {
-    /// Builds a lookup table mapping each isomorphism to its nearest cluster abstraction.
-    fn lookup(&self) -> Lookup
-    where
-        Self: Elkan<K, N>,
-    {
+    /// Builds a lookup from Elkan assignments (no redundant EMD search).
+    fn lookup_from_bounds(&self, bounds: &[Bounds<K>]) -> Lookup {
         log::info!("{:<32}{:<32}", "calculating lookup", self.street());
         use rayon::iter::IntoParallelIterator;
         use rayon::iter::ParallelIterator;
-        match self.street() {
-            Street::Pref | Street::Rive => Lookup::grow(self.street()),
-            Street::Flop | Street::Turn => (0..N)
-                .into_par_iter()
-                .map(|i| self.neighbor(i))
-                .collect::<Vec<(usize, f32)>>()
-                .into_iter()
-                .map(|(k, _)| self.abstraction(k))
-                .zip(IsomorphismIterator::from(self.street()))
-                .map(|(abs, iso)| (iso, abs))
-                .collect::<BTreeMap<Isomorphism, Abstraction>>()
-                .into(),
-        }
+        let assignments = (0..N)
+            .into_par_iter()
+            .map(|i| bounds[i].j())
+            .collect::<Vec<_>>();
+        assignments
+            .into_iter()
+            .map(|k| self.abstraction(k))
+            .zip(IsomorphismIterator::from(self.street()))
+            .map(|(abs, iso)| (iso, abs))
+            .collect::<BTreeMap<Isomorphism, Abstraction>>()
+            .into()
     }
 
     /// Computes pairwise distances between all learned cluster centroids.
@@ -79,9 +74,7 @@ impl<const K: usize, const N: usize> Layer<K, N> {
                     let ref a = self.abstraction(i);
                     let ref b = self.abstraction(j);
                     let index = Pair::from((a, b));
-                    let distance = self.metric.emd(x, y) + self.metric.emd(y, x);
-                    let distance = distance / 2.;
-                    metric.insert(index, distance);
+                    metric.insert(index, self.metric.emd(x, y));
                 }
             }
         }
@@ -190,7 +183,7 @@ impl<const K: usize, const N: usize> Layer<K, N> {
         let ref mut new = layer.bounds;
         std::mem::swap(new, old);
         Artifacts {
-            lookup: layer.lookup(),
+            lookup: layer.lookup_from_bounds(old.as_ref()),
             metric: layer.metric(),
             future: layer.future(),
         }

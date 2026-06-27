@@ -282,6 +282,10 @@ pub const PRUNING_WARMUP: usize = 524288;
 pub const SUBGAME_ALTS: usize = 4;
 /// CFR iterations for real-time subgame refinement.
 pub const SUBGAME_ITERATIONS: usize = 1024;
+/// Monte Carlo deals for joint opponent-range estimation (subgame world weights).
+/// Sampling N-1 distinct holes from the unseen deck is exact-by-construction
+/// (card removal respected) and scales to N=9, so it replaces enumeration for all N.
+pub const RANGE_SAMPLES: usize = 1000;
 
 // ============================================================================
 // TRAINING INFRASTRUCTURE

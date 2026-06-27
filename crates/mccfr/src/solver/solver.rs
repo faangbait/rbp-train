@@ -193,29 +193,34 @@ pub trait Solver: Send + Sync {
 
     /// Computes external (opponent) reach probability along a linear edge path.
     ///
-    /// Iterates through edges, tracking game state. For each opponent decision
-    /// point (not hero, not chance), looks up the averaged policy probability.
-    /// Returns the product of all opponent action probabilities.
+    /// Replays the path from `node`, accumulating the product of blueprint action
+    /// probabilities at every **opponent** decision node — i.e. nodes whose actor
+    /// is neither `hero` nor chance. Hero and chance edges contribute a factor of
+    /// 1 and are skipped (not truncated), so the result is the *joint* reach across
+    /// all N-1 opponents along the whole observed path, not just the first segment.
+    /// This is what makes the multiway opponent range correct for N>2.
+    ///
+    /// Each opponent factor is evaluated at the decision node *before* the edge is
+    /// applied, using the edges seen so far to resume the correct information set.
     fn external_reach(
         &self,
         node: Self::G,
         hero: Self::T,
         path: impl IntoIterator<Item = Self::E>,
     ) -> rbp_core::Probability {
-        path.into_iter()
-            .scan((node, Vec::new()), |(game, past), edge| {
-                past.push(edge);
-                *game = game.apply(edge);
-                match game.turn() {
-                    t if t == hero => None,
-                    t if t.is_chance() => None,
-                    _ => {
-                        let info = self.encoder().resume(past, game);
-                        Some(self.profile().averaged(&info, &edge))
-                    }
-                }
-            })
-            .product()
+        let mut game = node;
+        let mut past = Vec::new();
+        let mut reach: rbp_core::Probability = 1.0;
+        for edge in path {
+            let actor = game.turn();
+            if actor != hero && !actor.is_chance() {
+                let info = self.encoder().resume(&past, &game);
+                reach *= self.profile().averaged(&info, &edge);
+            }
+            past.push(edge);
+            game = game.apply(edge);
+        }
+        reach
     }
 
     /// turn a batch of trees into a batch

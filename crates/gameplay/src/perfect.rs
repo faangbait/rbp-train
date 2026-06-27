@@ -15,11 +15,11 @@
 //! # Conversions
 //!
 //! ```text
-//! Perfect::from((partial, hole))  ────►  Perfect     (add opponent info)
-//!                                 ◄────
+//! Perfect::from((partial, holes))  ───►  Perfect     (add N-1 opponents' info)
+//!                                  ◄───
 //! perfect.partial(hero)                              (erase opponent info)
 //!
-//! partial.histories() ─────►  Vec<(Obs, Perfect)>  (iterate all opponents)
+//! partial.histories() ─────►  Vec<(Obs, Perfect)>  (sample joint opponent deals)
 //! ```
 //!
 //! # Blind Handling
@@ -39,19 +39,24 @@ pub struct Perfect {
     actions: Vec<Action>,
 }
 
-impl From<(&Partial, Hole)> for Perfect {
-    /// Creates history from partial with assumed opponent hole.
+impl From<(&Partial, Vec<Hole>)> for Perfect {
+    /// Creates history from partial with an assumed multiway opponent assignment.
     ///
     /// Hero is derived from `partial.turn()`. The root game has:
     /// - Hero's cards from `partial.seen()`
-    /// - Opponent's cards from `hole` parameter
+    /// - Each non-hero seat's cards from a distinct entry of `holes`
+    ///   (consumed in ascending seat order; see [`Game::assume`])
     /// - Blinds already posted (POST-blind state)
-    fn from((partial, hole): (&Partial, Hole)) -> Self {
-        debug_assert!(partial.base().n() == 2);
-        let preblind = partial.base().assume(partial.turn(), hole);
-        let root = Game::blinds()
-            .into_iter()
-            .fold(preblind, |mut g, a| g.consume(a));
+    ///
+    /// `holes` should contain `n - 1` distinct hands for a full assignment;
+    /// supplying one hand reproduces the heads-up behaviour.
+    fn from((partial, holes): (&Partial, Vec<Hole>)) -> Self {
+        // Start from the post-blind root (blinds are posted correctly for any N
+        // via the preflop ticker), seed every seat with hero's hole, then overwrite
+        // each non-hero seat with its distinct sampled hand.
+        let root = Game::root()
+            .wipe(Hole::from(partial.seen()))
+            .assume(partial.turn(), &holes);
         Self {
             root,
             actions: partial.actions().to_vec(),

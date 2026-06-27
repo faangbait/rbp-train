@@ -421,6 +421,14 @@ pub trait Profile: Sized {
     ///
     /// # Implementation
     /// Exploitability = (BR(P1) + BR(P2)) / 2 where BR is best response value.
+    ///
+    /// # Scope: two-player only
+    /// This diagnostic is only meaningful for `rbp_core::n() == 2`: it averages the
+    /// best-response values of exactly two seats (`T::from(0)` and `T::from(1)`).
+    /// For multiway (`n() > 2`) play there is no single best-response scalar — each
+    /// seat best-responds against the *joint* strategy of the others — so callers
+    /// must not treat this as a convergence metric for `NlheSolver` with `n() > 2`.
+    /// Build a dedicated multiway best-response value if/when something consumes it.
     fn exploitability(&self, tree: Tree<Self::T, Self::E, Self::G, Self::I>) -> Utility {
         let ref partition = tree.partition();
         0.5 * (0.

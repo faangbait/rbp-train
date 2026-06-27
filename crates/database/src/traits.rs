@@ -150,6 +150,10 @@ impl Row for (i64, i16, i64, i64, f32, f32, f32, i32) {
 /// Binary COPY is orders of magnitude faster than INSERT statements
 /// for bulk loading. A typical clustering run uploads millions of rows
 /// in seconds rather than hours.
+///
+/// Rows are flushed in batches to amortize async scheduling overhead.
+pub const COPY_BATCH_SIZE: usize = 16_384;
+
 #[async_trait::async_trait]
 pub trait Streamable: Schema + Sized + Send {
     /// The row type for binary serialization.
@@ -161,10 +165,23 @@ pub trait Streamable: Schema + Sized + Send {
     /// Opens a COPY stream, writes each row in binary format, and
     /// finalizes the upload. Consumes `self` to enable move semantics.
     async fn stream(self, client: &Client) {
+        Self::stream_rows(client, self.rows()).await;
+    }
+    /// Streams a row iterator without materializing the full collection.
+    async fn stream_rows(client: &Client, rows: impl Iterator<Item = Self::Row> + Send) {
         let sink = client.copy_in(Self::copy()).await.expect("copy_in");
         let writer = BinaryCopyInWriter::new(sink, Self::columns());
         futures::pin_mut!(writer);
-        for row in self.rows() {
+        let mut batch = Vec::with_capacity(COPY_BATCH_SIZE);
+        for row in rows {
+            batch.push(row);
+            if batch.len() >= COPY_BATCH_SIZE {
+                for row in batch.drain(..) {
+                    row.write(writer.as_mut()).await;
+                }
+            }
+        }
+        for row in batch {
             row.write(writer.as_mut()).await;
         }
         writer.finish().await.expect("finish");
