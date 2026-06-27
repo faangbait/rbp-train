@@ -25,28 +25,48 @@ use std::ops::Not;
 /// - `seats` — Per-player state (stack, stake, status, hole cards)
 /// - `dealer` — Button position
 /// - `ticker` — Action counter for determining whose turn it is
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Eq)]
 pub struct Game {
     pot: Chips,
     board: Board,
-    seats: [Seat; N],
+    seats: [Seat; MAX_N],
+    players: u8,
     dealer: Position,
     ticker: Position,
 }
 
 impl Default for Game {
     fn default() -> Self {
+        let players = n() as u8;
         let mut deck = Deck::new();
+        let seats = std::array::from_fn(|i| {
+            if i < players as usize {
+                Seat::from((deck.hole(), STACK))
+            } else {
+                let mut seat = Seat::from((deck.hole(), 0));
+                seat.reset_state(State::Folding);
+                seat
+            }
+        });
         Self {
             pot: 0,
             board: Board::empty(),
-            seats: [(); N]
-                .map(|_| deck.hole())
-                .map(|h| (h, STACK))
-                .map(Seat::from),
+            seats,
+            players,
             dealer: 0usize,
             ticker: 0usize,
         }
+    }
+}
+
+impl PartialEq for Game {
+    fn eq(&self, other: &Self) -> bool {
+        self.pot == other.pot
+            && self.board == other.board
+            && self.players == other.players
+            && self.dealer == other.dealer
+            && self.ticker == other.ticker
+            && self.seat_slice() == other.seat_slice()
     }
 }
 
@@ -67,7 +87,7 @@ impl Game {
     ///
     /// Used for setting up counterfactual game states during analysis.
     pub fn wipe(mut self, hole: Hole) -> Self {
-        for seat in self.seats.iter_mut() {
+        for seat in self.seat_slice_mut() {
             seat.reset_cards(hole);
         }
         self
@@ -81,7 +101,7 @@ impl Game {
     /// this might be incorrect, i don't know if it takes into considration the relativity of
     /// dealer position in Turn.
     pub fn assume(mut self, hero: Turn, hole: Hole) -> Self {
-        self.seats
+        self.seat_slice_mut()
             .iter_mut()
             .enumerate()
             .filter(|(i, _)| Turn::Choice(*i) != hero)
@@ -122,17 +142,24 @@ impl Game {
 
 /// Public state accessors.
 impl Game {
-    /// Number of players (constant for heads-up).
+    fn seat_slice(&self) -> &[Seat] {
+        &self.seats[..self.players as usize]
+    }
+    fn seat_slice_mut(&mut self) -> &mut [Seat] {
+        let players = self.players as usize;
+        &mut self.seats[..players]
+    }
+    /// Number of players at the table.
     pub fn n(&self) -> usize {
-        self.seats.len()
+        self.players as usize
     }
     /// Total chips in the pot.
     pub fn pot(&self) -> Chips {
         self.pot
     }
-    /// All player seats.
-    pub fn seats(&self) -> [Seat; N] {
-        self.seats
+    /// Active player seats.
+    pub fn seats(&self) -> &[Seat] {
+        self.seat_slice()
     }
     /// Community cards on the board.
     pub fn board(&self) -> Board {
@@ -340,7 +367,7 @@ impl Game {
         for (_, (settlement, seat)) in self
             .settlements()
             .iter()
-            .zip(self.seats.iter_mut())
+            .zip(self.seat_slice_mut())
             .enumerate()
             .inspect(|(i, (x, s))| log::trace!("{} {} {:>7} {}", i, s.cards(), s.stack(), x.won()))
         {
@@ -357,17 +384,18 @@ impl Game {
         debug_assert!(self.pot() == 0);
         debug_assert!(self.street() == Street::Pref);
         let mut deck = Deck::new();
-        for seat in self.seats.iter_mut() {
+        for seat in self.seat_slice_mut() {
             seat.reset_state(State::Betting);
             seat.reset_cards(deck.hole());
             seat.reset_stake();
             seat.reset_spent();
+            seat.reset_stack();
         }
     }
 
     fn move_button(&mut self) {
         debug_assert!(self.pot() == 0);
-        debug_assert!(self.seats.len() == self.n());
+        debug_assert_eq!(self.players as usize, self.n());
         debug_assert!(self.street() == Street::Pref);
         self.dealer = self.dealer + 1;
         self.dealer = self.dealer % self.n();
@@ -426,7 +454,7 @@ impl Game {
 impl Game {
     /// Resets per-street stakes when a new street begins.
     fn next_street(&mut self) {
-        for seat in self.seats.iter_mut() {
+        for seat in self.seat_slice_mut() {
             seat.reset_stake();
         }
     }
@@ -483,21 +511,21 @@ impl Game {
     /// All betting players are in for the effective stake.
     fn is_everyone_matched(&self) -> bool {
         let stake = self.stakes();
-        self.seats
+        self.seat_slice()
             .iter()
             .filter(|s| s.state() == State::Betting)
             .all(|s| s.stake() == stake)
     }
     /// All non-folded players are all-in.
     fn is_everyone_shoving(&self) -> bool {
-        self.seats
+        self.seat_slice()
             .iter()
             .filter(|s| s.state() != State::Folding)
             .all(|s| s.state() == State::Shoving)
     }
     /// Exactly one player remains (all others folded).
     fn is_everyone_folding(&self) -> bool {
-        self.seats
+        self.seat_slice()
             .iter()
             .filter(|s| s.state() != State::Folding)
             .count()
@@ -524,7 +552,7 @@ impl Game {
         } else {
             0
         };
-        self.seats
+        self.seat_slice()
             .iter()
             .filter(|s| s.state() != State::Folding)
             .map(|s| s.stake())
@@ -571,7 +599,7 @@ impl Game {
     /// Computed as: chips to call + max(last raise increment, big blind).
     pub fn to_raise(&self) -> Chips {
         let (most_large_stake, next_large_stake) = self
-            .seats
+            .seat_slice()
             .iter()
             .filter(|s| s.state() != State::Folding)
             .map(|s| s.stake())
@@ -636,10 +664,14 @@ impl Game {
     }
     /// Returns true if this is a showdown (multiple players remain).
     pub fn is_showdown(&self) -> bool {
-        self.seats.iter().filter(|s| s.state().is_active()).count() > 1
+        self.seat_slice()
+            .iter()
+            .filter(|s| s.state().is_active())
+            .count()
+            > 1
     }
     fn ledger(&self) -> Vec<Settlement> {
-        self.seats
+        self.seat_slice()
             .iter()
             .enumerate()
             .map(|(position, _)| self.settlement(position))
@@ -664,7 +696,7 @@ impl Game {
     /// Returns the remaining deck (all cards not in play).
     pub fn deck(&self) -> Deck {
         let mut removed = Hand::from(self.board);
-        for seat in self.seats.iter() {
+        for seat in self.seat_slice() {
             removed = Hand::or(removed, Hand::from(seat.cards()));
         }
         Deck::from(removed.complement())
@@ -717,7 +749,7 @@ impl Game {
     /// In N-way pots this would be the second-largest stack;
     /// for heads-up it's simply the smaller of the two.
     pub fn effective(&self) -> Chips {
-        self.seats.iter().map(|s| s.stack()).min().unwrap_or(0)
+        self.seat_slice().iter().map(|s| s.stack()).min().unwrap_or(0)
     }
     /// Stack-to-pot ratio (effective stack / pot).
     pub fn spr(&self) -> f32 {
@@ -728,7 +760,7 @@ impl Game {
     }
     /// Maximum stake among all players this street.
     fn stakes(&self) -> Chips {
-        self.seats
+        self.seat_slice()
             .iter()
             .map(|s| s.stake())
             .max()
@@ -851,7 +883,7 @@ impl Game {
 
 impl std::fmt::Display for Game {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for seat in self.seats.iter() {
+        for seat in self.seat_slice() {
             writeln!(
                 f,
                 "{:>3} {:>3} {:<6}",
@@ -960,7 +992,7 @@ mod tests {
 
     macro_rules! hu_only {
         () => {
-            if rbp_core::N != 2 {
+            if !rbp_core::try_init_players(2) && rbp_core::n() != 2 {
                 return;
             }
         };
@@ -968,7 +1000,7 @@ mod tests {
 
     macro_rules! n3_only {
         () => {
-            if rbp_core::N != 3 {
+            if !rbp_core::try_init_players(3) && rbp_core::n() != 3 {
                 return;
             }
         };

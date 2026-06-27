@@ -50,7 +50,7 @@ impl Turn {
 
 impl rbp_core::Arbitrary for Turn {
     fn random() -> Self {
-        Self::Choice(rand::random_range(0..rbp_core::N))
+        Self::Choice(rand::random_range(0..rbp_core::n()))
     }
 }
 

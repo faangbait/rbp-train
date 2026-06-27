@@ -2,7 +2,8 @@
 //!
 //! Unified training pipeline with postgres as source of truth.
 //!
-//! Options: --status, --fast, --slow, --cluster, --reset
+//! Options: --status, --initialize, --fast, --slow, --cluster, --reset
+//! Env: DB_URL (e.g. .../pluribus3), PLAYERS (required, 2..=9), TRAIN_DURATION
 
 #[tokio::main]
 async fn main() {

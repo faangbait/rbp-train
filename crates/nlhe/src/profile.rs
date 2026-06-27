@@ -45,7 +45,7 @@ impl Profile for NlheProfile {
         self.iterations += 1;
     }
     fn walker(&self) -> Self::T {
-        NlheTurn::from(self.epochs() % rbp_core::N)
+        NlheTurn::from(self.epochs() % rbp_core::n())
     }
     fn epochs(&self) -> usize {
         self.iterations

@@ -57,7 +57,7 @@ impl Worker {
         self.infos.fetch_add(1, Ordering::Relaxed);
     }
     fn walker(&self) -> NlheTurn {
-        NlheTurn::from(self.epoch() % rbp_core::N)
+        NlheTurn::from(self.epoch() % rbp_core::n())
     }
 }
 

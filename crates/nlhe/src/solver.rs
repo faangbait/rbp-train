@@ -76,14 +76,14 @@ where
         &self,
         recall: &Partial,
     ) -> SubSolver<'_, NlheProfile, NlheEncoder, SUBGAME_ITERATIONS> {
-        if rbp_core::N != 2 {
+        if rbp_core::n() != 2 {
             panic!("subgame solving is currently heads-up only");
         }
         SubSolver::new(
             &self.encoder,
             &self.profile,
             match recall.turn() {
-                Turn::Choice(position) => NlheTurn::from((position + 1) % rbp_core::N),
+                Turn::Choice(position) => NlheTurn::from((position + 1) % rbp_core::n()),
                 _ => unreachable!("subgame solving expects a player decision node"),
             },
             recall.subgame().into_iter().map(NlheEdge::from).collect(),
@@ -102,7 +102,7 @@ where
     /// Projects observation-level range to abstraction level.
     /// Aggregates reach by abstraction bucket for clustering into worlds.
     pub fn opponent_range(&self, recall: &Partial) -> Posterior<NlheSecret> {
-        if rbp_core::N != 2 {
+        if rbp_core::n() != 2 {
             panic!("opponent range calculation is currently heads-up only");
         }
         let hero = NlheTurn::from(recall.turn());

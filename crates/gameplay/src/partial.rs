@@ -450,7 +450,7 @@ mod tests {
 
     macro_rules! hu_only {
         () => {
-            if rbp_core::N != 2 {
+            if !rbp_core::try_init_players(2) && rbp_core::n() != 2 {
                 return;
             }
         };
@@ -458,7 +458,7 @@ mod tests {
 
     macro_rules! n3_only {
         () => {
-            if rbp_core::N != 3 {
+            if !rbp_core::try_init_players(3) && rbp_core::n() != 3 {
                 return;
             }
         };

@@ -74,7 +74,7 @@ impl Table {
 
 impl Default for Table {
     fn default() -> Self {
-        Self::new(rbp_core::N)
+        Self::new(rbp_core::n())
     }
 }
 

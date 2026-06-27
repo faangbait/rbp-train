@@ -20,6 +20,7 @@
 //! - [`workers`] — Distributed training workers for MCCFR
 mod epoch;
 mod fast;
+mod initialize;
 mod mode;
 mod pretraining;
 mod slow;
@@ -29,6 +30,7 @@ pub mod workers;
 
 pub use epoch::*;
 pub use fast::*;
+pub use initialize::*;
 pub use mode::*;
 pub use pretraining::*;
 pub use slow::*;

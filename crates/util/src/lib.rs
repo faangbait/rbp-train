@@ -141,8 +141,42 @@ impl<T> Display for ID<T> {
 // ============================================================================
 // GAME TREE PARAMETERS
 // ============================================================================
-/// Number of players at the table.
-pub const N: usize = 3;
+/// Maximum seats supported at a table (2..=9 runtime via [`init_players`]).
+pub const MAX_N: usize = 9;
+
+static PLAYERS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// Active table size. Defaults to `PLAYERS` env or 2 when unset (tests).
+pub fn n() -> usize {
+    match PLAYERS.get() {
+        Some(players) => *players,
+        None => std::env::var("PLAYERS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|players| (2..=MAX_N).contains(players))
+            .unwrap_or(2),
+    }
+}
+
+/// Set active table size from `PLAYERS` before any `Game::root()` call.
+pub fn init_players(players: usize) {
+    assert!(
+        (2..=MAX_N).contains(&players),
+        "PLAYERS must be between 2 and {MAX_N}, got {players}"
+    );
+    PLAYERS
+        .set(players)
+        .unwrap_or_else(|_| panic!("init_players({players}): table size already set to {}", n()));
+}
+
+/// Set table size once; returns false if another size is already active.
+pub fn try_init_players(players: usize) -> bool {
+    assert!(
+        (2..=MAX_N).contains(&players),
+        "PLAYERS must be between 2 and {MAX_N}, got {players}"
+    );
+    PLAYERS.set(players).is_ok()
+}
 /// Starting stack size in big blinds.
 pub const STACK: Chips = 100;
 /// Big blind amount.
