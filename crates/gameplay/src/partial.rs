@@ -66,9 +66,7 @@ impl Partial {
 
 impl Recall for Partial {
     fn root(&self) -> Game {
-        Game::blinds()
-            .into_iter()
-            .fold(self.base(), |mut g, a| g.consume(a))
+        Game::root().wipe(Hole::from(self.seen()))
     }
     fn actions(&self) -> &[Action] {
         &self.actions

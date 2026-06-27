@@ -23,7 +23,7 @@ use std::ops::Not;
 /// - `pot` — Total chips in the center (including current street bets)
 /// - `board` — Community cards (0–5 depending on street)
 /// - `seats` — Per-player state (stack, stake, status, hole cards)
-/// - `dealer` — Button position (0 or 1 for heads-up)
+/// - `dealer` — Button position
 /// - `ticker` — Action counter for determining whose turn it is
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Game {
@@ -58,6 +58,7 @@ impl Game {
     /// decision. Default stack is 100bb with P0 on the button.
     pub fn root() -> Self {
         let mut game = Self::default();
+        game.reset_preflop_ticker_for_blinds();
         game.act(game.posts());
         game.act(game.posts());
         game
@@ -197,6 +198,59 @@ impl Game {
         child.act(action);
         Ok(child)
     }
+
+    /// Returns a compact set of realistic non-all-in raise actions.
+    pub fn valid_raises(&self) -> Vec<Action> {
+        if !self.may_raise() {
+            return vec![];
+        }
+
+        let min_raise = self.to_raise();
+        let max_raise = self.to_shove() - 1;
+        let bb = Self::bblind().max(1);
+        let call = self.to_call();
+        let pot_after_call = self.pot() + call;
+        let unopened = match self.street() {
+            Street::Pref => self.stakes() == Self::bblind(),
+            _ => self.stakes() == 0,
+        };
+
+        let mut candidates = vec![min_raise];
+
+        if self.street() == Street::Pref && unopened {
+            let actor_stake = self.actor_ref().stake();
+            for total in [
+                3 * Self::bblind(),
+                4 * Self::bblind(),
+                5 * Self::bblind(),
+            ] {
+                candidates.push(total.saturating_sub(actor_stake));
+            }
+        } else if unopened {
+            candidates.extend([
+                call + pot_after_call / 3,
+                call + pot_after_call / 2,
+                call + (2 * pot_after_call) / 3,
+                call + pot_after_call,
+                call + (3 * pot_after_call) / 2,
+            ]);
+        } else {
+            candidates.extend([call + (2 * pot_after_call) / 3, call + pot_after_call]);
+        }
+
+        candidates
+            .into_iter()
+            .map(|raise| {
+                let rounded = ((raise + bb / 2) / bb) * bb;
+                rounded.clamp(min_raise, max_raise)
+            })
+            .filter(|&raise| raise >= min_raise && raise <= max_raise)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(Action::Raise)
+            .collect()
+    }
+
     /// Returns all legal actions in the current state.
     ///
     /// Empty at terminal nodes. Contains exactly one action at chance nodes.
@@ -214,20 +268,20 @@ impl Game {
         }
         // now it's certainly a Turn::Choice
         let mut options = Vec::new();
-        if self.may_raise() {
-            options.push(self.raise());
-        }
-        if self.may_shove() {
-            options.push(self.shove());
-        }
-        if self.may_call() {
-            options.push(self.calls());
-        }
         if self.may_fold() {
             options.push(self.folds());
         }
         if self.may_check() {
             options.push(self.check());
+        }
+        if self.may_call() {
+            options.push(self.calls());
+        }
+        if self.may_raise() {
+            options.extend(self.valid_raises());
+        }
+        if self.may_shove() {
+            options.push(self.shove());
         }
         debug_assert!(options.len() > 0);
         options
@@ -317,7 +371,7 @@ impl Game {
         debug_assert!(self.street() == Street::Pref);
         self.dealer = self.dealer + 1;
         self.dealer = self.dealer % self.n();
-        self.ticker = 0;
+        self.reset_preflop_ticker_for_blinds();
     }
 }
 
@@ -407,7 +461,7 @@ impl Game {
     }
     /// True if blinds have not yet been posted.
     pub fn must_post(&self) -> bool {
-        self.street() == Street::Pref && self.pot() < Self::sblind() + Self::bblind()
+        self.street() == Street::Pref && self.ticker < self.preflop_start_ticker() + 2
     }
     /// All players have acted and the pot is right.
     fn is_everyone_alright(&self) -> bool {
@@ -419,7 +473,12 @@ impl Game {
     }
     /// All players have acted at least once this street.
     fn is_everyone_touched(&self) -> bool {
-        self.ticker > self.n() + if self.street() == Street::Pref { 1 } else { 0 }
+        let extra = if self.street() == Street::Pref {
+            self.preflop_start_ticker() + 1
+        } else {
+            0
+        };
+        self.ticker > self.n() + extra
     }
     /// All betting players are in for the effective stake.
     fn is_everyone_matched(&self) -> bool {
@@ -458,9 +517,27 @@ impl Game {
     pub fn may_check(&self) -> bool {
         matches!(self.turn(), Turn::Choice(_)) && self.stakes() == self.actor_ref().stake()
     }
+    /// Approximate number of completed raise levels on the current street.
+    fn raise_depth(&self) -> usize {
+        let baseline = if self.street() == Street::Pref {
+            Self::bblind()
+        } else {
+            0
+        };
+        self.seats
+            .iter()
+            .filter(|s| s.state() != State::Folding)
+            .map(|s| s.stake())
+            .filter(|&stake| stake > baseline)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    }
+
     /// True if raising is legal (have chips beyond the min-raise).
     pub fn may_raise(&self) -> bool {
-        matches!(self.turn(), Turn::Choice(_)) && self.to_raise() < self.to_shove()
+        matches!(self.turn(), Turn::Choice(_))
+            && self.to_raise() < self.to_shove()
+            && self.raise_depth() <= rbp_core::MAX_RAISE_REPEATS
     }
     /// True if shoving (all-in) is legal.
     pub fn may_shove(&self) -> bool {
@@ -477,10 +554,12 @@ impl Game {
     /// Blind amount to post (SB or BB depending on position).
     pub fn to_post(&self) -> Chips {
         debug_assert!(self.street() == Street::Pref);
-        if self.actor_idx() == self.dealer {
+        if self.actor_idx() == self.small_blind_idx() {
             Self::sblind().min(self.actor_ref().stack())
-        } else {
+        } else if self.actor_idx() == self.big_blind_idx() {
             Self::bblind().min(self.actor_ref().stack())
+        } else {
+            panic!("only small blind and big blind may post blinds")
         }
     }
     /// All remaining chips (for all-in).
@@ -594,6 +673,22 @@ impl Game {
 
 /// Position tracking.
 impl Game {
+    fn preflop_start_ticker(&self) -> Position {
+        if self.n() == 2 { 0 } else { 1 }
+    }
+    fn reset_preflop_ticker_for_blinds(&mut self) {
+        self.ticker = self.preflop_start_ticker();
+    }
+    fn small_blind_idx(&self) -> Position {
+        if self.n() == 2 {
+            self.dealer
+        } else {
+            (self.dealer + 1) % self.n()
+        }
+    }
+    fn big_blind_idx(&self) -> Position {
+        (self.small_blind_idx() + 1) % self.n()
+    }
     /// Index of the player to act.
     fn actor_idx(&self) -> Position {
         (self.dealer + self.ticker) % self.n()
