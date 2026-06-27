@@ -127,14 +127,22 @@ pub trait Elkan<const K: usize, const N: usize>: Sync {
     }
 
     /// Computes new centroids from current assignments.
+    ///
+    /// When no points are assigned to a cluster, the previous centroid is retained.
+    /// An empty centroid would break EMD (which requires non-zero support).
     fn centroids(&self, bounds: &[Bounds<K>]) -> [Self::P; K] {
         std::array::from_fn(|j| {
-            bounds
+            let assigned = bounds
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| b.j() == j)
-                .map(|(i, _)| self.point(i))
-                .fold(self.kmean(j).identity(), Self::P::absorb)
+                .map(|(i, _)| self.point(i));
+            let mut iter = assigned;
+            let first = match iter.next() {
+                Some(p) => *p,
+                None => return *self.kmean(j),
+            };
+            iter.fold(first, |acc, p| acc.absorb(p))
         })
     }
 
@@ -163,18 +171,22 @@ pub trait Elkan<const K: usize, const N: usize>: Sync {
 
     /// Executes one naive iteration (for verification/benchmarking).
     fn step_naive(&self) -> [Self::P; K] {
-        let identity = self.kmean(0).identity();
         let assignments = (0..N)
             .into_par_iter()
             .map(|i| self.neighbor(i).0)
             .collect::<Vec<usize>>();
         std::array::from_fn(|j| {
-            assignments
+            let assigned = assignments
                 .iter()
                 .enumerate()
                 .filter(|(_, k)| k == &&j)
-                .map(|(i, _)| self.point(i))
-                .fold(identity, Self::P::absorb)
+                .map(|(i, _)| self.point(i));
+            let mut iter = assigned;
+            let first = match iter.next() {
+                Some(p) => *p,
+                None => return *self.kmean(j),
+            };
+            iter.fold(first, |acc, p| acc.absorb(p))
         })
     }
 
