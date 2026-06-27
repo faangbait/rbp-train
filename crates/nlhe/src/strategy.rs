@@ -212,22 +212,26 @@ mod tests {
     #[test]
     fn construction() {
         let i = NlheInfo::random();
-        let d: Vec<Decision<NlheEdge>> = i
+        let edges: Vec<NlheEdge> = i
             .choices()
             .into_iter()
             .map(NlheEdge::from)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let d: Vec<Decision<NlheEdge>> = edges
+            .iter()
             .enumerate()
             .map(|(idx, edge)| Decision {
-                edge,
+                edge: *edge,
                 mass: (idx + 1) as f32 * 10.0,
                 counts: idx as u32,
             })
             .collect();
-        let expected = d.len();
         let s = Strategy::from((i.clone(), d));
         assert_eq!(s.info(), &i);
-        assert_eq!(s.accumulated().len(), expected);
-        assert_eq!(s.counts().len(), expected);
+        assert_eq!(s.accumulated().len(), edges.len());
+        assert_eq!(s.counts().len(), edges.len());
         assert!(close(sums(&s), 1.0));
     }
 

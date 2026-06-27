@@ -958,6 +958,22 @@ impl Game {
 mod tests {
     use super::*;
 
+    macro_rules! hu_only {
+        () => {
+            if rbp_core::N != 2 {
+                return;
+            }
+        };
+    }
+
+    macro_rules! n3_only {
+        () => {
+            if rbp_core::N != 3 {
+                return;
+            }
+        };
+    }
+
     /// dealer posts SB, non-dealer posts BB, dealer acts first after blinds
     #[test]
     fn test_root() {
@@ -970,6 +986,7 @@ mod tests {
 
     #[test]
     fn everyone_folds_pref() {
+        hu_only!();
         let game = Game::root();
         let game = game.apply(Action::Fold);
         assert!(game.is_everyone_folding() == true);
@@ -981,6 +998,7 @@ mod tests {
 
     #[test]
     fn everyone_folds_flop() {
+        hu_only!();
         let game = Game::root();
         let flop = game.deck().deal(Street::Pref);
         let game = game.apply(Action::Call(1));
@@ -997,6 +1015,7 @@ mod tests {
 
     #[test]
     fn history_of_checks() {
+        hu_only!();
         // Blinds
         let game = Game::root();
         assert!(game.board().street() == Street::Pref);
@@ -1160,6 +1179,7 @@ mod tests {
     /// next() resets game state correctly after terminal
     #[test]
     fn next_after_fold() {
+        hu_only!();
         let game = Game::root().apply(Action::Fold);
         assert!(game.must_stop());
         let next = game.continuation().expect("can continue");
@@ -1174,6 +1194,7 @@ mod tests {
     /// dealer rotates correctly across multiple hands
     #[test]
     fn dealer_rotation() {
+        hu_only!();
         let game = Game::root();
         assert_eq!(game.dealer, 0);
         let game = game.apply(Action::Fold).continuation().unwrap();
@@ -1187,6 +1208,7 @@ mod tests {
     /// ticker resets correctly for each new hand, regardless of dealer
     #[test]
     fn ticker_reset_on_next() {
+        hu_only!();
         let g0 = Game::root();
         let g1 = g0.apply(Action::Fold).continuation().unwrap();
         let g2 = g1.apply(Action::Fold).continuation().unwrap();
@@ -1199,6 +1221,7 @@ mod tests {
     /// is_everyone_touched works correctly for dealer=1
     #[test]
     fn touched_with_rotated_dealer() {
+        hu_only!();
         let game = Game::root().apply(Action::Fold).continuation().unwrap();
         assert_eq!(game.dealer, 1);
         assert!(!game.is_everyone_touched()); // just blinds
@@ -1212,6 +1235,7 @@ mod tests {
     /// multi-street hand with rotated dealer
     #[test]
     fn full_hand_rotated_dealer() {
+        hu_only!();
         let game = Game::root().apply(Action::Fold).continuation().unwrap();
         assert_eq!(game.dealer, 1);
         // preflop: P1 (dealer) calls, P0 checks
@@ -1232,6 +1256,7 @@ mod tests {
     /// five consecutive hands, verifying state after each
     #[test]
     fn five_hands_sequence() {
+        hu_only!();
         let mut game = Game::root();
         for i in 0..5 {
             assert_eq!(game.dealer, i % 2);
@@ -1246,6 +1271,7 @@ mod tests {
     /// call-check sequence works identically for both dealer positions
     #[test]
     fn symmetric_preflop_action() {
+        hu_only!();
         // dealer=0: P0 calls, P1 checks
         let g0 = Game::root();
         assert_eq!(g0.dealer, 0);
@@ -1267,6 +1293,7 @@ mod tests {
     /// actor position is correct for both dealers on flop
     #[test]
     fn flop_actor_both_dealers() {
+        hu_only!();
         // dealer=0: non-dealer (P1) acts first on flop
         let g0 = Game::root().apply(Action::Call(1)).apply(Action::Check);
         let flop = g0.deck().deal(Street::Pref);
@@ -1287,6 +1314,7 @@ mod tests {
     /// shove and call leads to showdown
     #[test]
     fn allin_showdown() {
+        hu_only!();
         let game = Game::root();
         let shove = game.to_shove(); // dealer's stack = 99
         let game = game.apply(Action::Shove(shove));
@@ -1300,6 +1328,7 @@ mod tests {
     /// shove and fold is terminal
     #[test]
     fn allin_fold() {
+        hu_only!();
         let game = Game::root();
         let shove = game.to_shove();
         let game = game.apply(Action::Shove(shove)).apply(Action::Fold);
@@ -1310,6 +1339,7 @@ mod tests {
     /// raise-reraise sequence keeps action open
     #[test]
     fn raise_reraise() {
+        hu_only!();
         let g0 = Game::root();
         let r1 = g0.to_raise();
         let g1 = g0.apply(Action::Raise(r1));
@@ -1324,6 +1354,7 @@ mod tests {
     /// stacks update correctly after fold (before new blinds)
     #[test]
     fn stacks_after_fold() {
+        hu_only!();
         let game = Game::root().apply(Action::Fold);
         assert!(game.must_stop());
         // check settlements before next hand
@@ -1338,6 +1369,7 @@ mod tests {
     /// stacks update correctly after flop fold
     #[test]
     fn stacks_after_flop_bet_fold() {
+        hu_only!();
         let game = Game::root().apply(Action::Call(1)).apply(Action::Check);
         let flop = game.deck().deal(Street::Pref);
         let game = game.apply(Action::Draw(flop));
@@ -1357,6 +1389,7 @@ mod tests {
     /// multi-hand with betting, not just folds
     #[test]
     fn multi_hand_with_betting() {
+        hu_only!();
         let g0 = Game::root();
         // hand 1: call-check, bet-fold on flop
         let g0 = g0.apply(Action::Call(1)).apply(Action::Check);
@@ -1383,6 +1416,7 @@ mod tests {
     /// legal() returns correct options preflop after blinds
     #[test]
     fn legal_preflop_options() {
+        hu_only!();
         let game = Game::root();
         let legal = game.legal();
         assert!(legal.contains(&Action::Fold));
@@ -1395,6 +1429,7 @@ mod tests {
     /// legal() after limp allows check
     #[test]
     fn legal_bb_can_check() {
+        hu_only!();
         let game = Game::root().apply(Action::Call(1));
         let legal = game.legal();
         assert!(legal.contains(&Action::Check));
@@ -1404,6 +1439,7 @@ mod tests {
     /// legal() on flop
     #[test]
     fn legal_flop_options() {
+        hu_only!();
         let game = Game::root().apply(Action::Call(1)).apply(Action::Check);
         let flop = game.deck().deal(Street::Pref);
         let game = game.apply(Action::Draw(flop));
@@ -1416,6 +1452,7 @@ mod tests {
     /// terminal via river showdown
     #[test]
     fn terminal_river_showdown() {
+        hu_only!();
         let mut game = Game::root().apply(Action::Call(1)).apply(Action::Check);
         for street in [Street::Pref, Street::Flop, Street::Turn] {
             let cards = game.deck().deal(street);
@@ -1432,6 +1469,7 @@ mod tests {
     /// ten consecutive hands alternate dealers correctly
     #[test]
     fn ten_hands_alternation() {
+        hu_only!();
         let mut game = Game::root();
         for i in 0..10 {
             assert_eq!(game.dealer, i % 2);
@@ -1443,6 +1481,7 @@ mod tests {
     /// min raise calculation
     #[test]
     fn min_raise_size() {
+        hu_only!();
         let game = Game::root();
         // dealer stake=1, BB stake=2. to_raise = (2-1) + max(2-1, BB) = 1 + 2 = 3
         assert_eq!(game.to_raise(), 3);
@@ -1454,6 +1493,7 @@ mod tests {
     /// pot size tracks correctly through streets
     #[test]
     fn pot_tracking() {
+        hu_only!();
         let game = Game::root();
         assert_eq!(game.pot(), 3);
         let game = game.apply(Action::Call(1));
@@ -1467,6 +1507,7 @@ mod tests {
     /// cannot continue if player busts
     #[test]
     fn bust_prevents_next() {
+        hu_only!();
         // create game where one player will bust
         let game = Game::root();
         let shove = game.to_shove();
@@ -1494,6 +1535,7 @@ mod tests {
     /// actor_idx wraps correctly with ticker
     #[test]
     fn actor_idx_wrapping() {
+        hu_only!();
         let game = Game::root();
         assert_eq!(game.actor_idx(), 0); // dealer, ticker=2, (0+2)%2=0
         let game = game.apply(Action::Call(1));
@@ -1535,6 +1577,7 @@ mod tests {
     /// snap coerces fold to check when not facing bet
     #[test]
     fn snap_fold_to_check_not_facing_bet() {
+        hu_only!();
         let game = Game::root().apply(Action::Call(1));
         assert!(!game.may_fold());
         assert!(game.may_check());

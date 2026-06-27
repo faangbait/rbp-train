@@ -65,6 +65,27 @@ impl<'g> Dealer<'g> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn call_if_possible(game: &Game) -> Action {
+        if game.may_call() {
+            game.calls()
+        } else if game.may_check() {
+            Action::Check
+        } else {
+            game.passive()
+        }
+    }
+
+    fn advance_to_flop(dealer: &mut Dealer<'_>) {
+        while dealer.street() == Street::Pref && !dealer.game().must_deal() {
+            let action = call_if_possible(dealer.game());
+            dealer.apply(action);
+        }
+        if dealer.is_chance() {
+            dealer.deal();
+        }
+    }
+
     #[test]
     fn dealer_wraps_game() {
         let mut game = Game::root();
@@ -77,9 +98,10 @@ mod tests {
     fn dealer_applies_action() {
         let mut game = Game::root();
         let pot_before = game.pot();
+        let action = call_if_possible(&game);
         {
             let mut dealer = Dealer::new(&mut game);
-            dealer.apply(Action::Call(1));
+            dealer.apply(action);
         }
         assert!(game.pot() > pot_before);
     }
@@ -88,11 +110,9 @@ mod tests {
         let mut game = Game::root();
         {
             let mut dealer = Dealer::new(&mut game);
-            dealer.apply(Action::Call(1));
-            dealer.apply(Action::Check);
-            assert!(dealer.is_chance());
-            let street = dealer.deal();
-            assert_eq!(street, Street::Flop);
+            advance_to_flop(&mut dealer);
+            assert_eq!(dealer.street(), Street::Flop);
+            assert!(!dealer.is_chance());
         }
     }
     #[test]
@@ -100,8 +120,7 @@ mod tests {
         let mut game = Game::root();
         {
             let mut dealer = Dealer::new(&mut game);
-            dealer.apply(Action::Call(1));
-            // BB can check after limp
+            advance_to_flop(&mut dealer);
             assert_eq!(dealer.passive(), Action::Check);
         }
     }
@@ -118,7 +137,13 @@ mod tests {
         let mut game = Game::root();
         {
             let mut dealer = Dealer::new(&mut game);
-            dealer.apply(Action::Fold);
+            while !dealer.is_terminal() {
+                if dealer.is_chance() {
+                    dealer.deal();
+                    continue;
+                }
+                dealer.apply(Action::Fold);
+            }
             assert!(dealer.is_terminal());
         }
     }
