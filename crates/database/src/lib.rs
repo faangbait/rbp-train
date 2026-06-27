@@ -39,21 +39,67 @@ use tokio_postgres::Client;
 
 /// Establishes a database connection.
 ///
-/// Connects to PostgreSQL using the `DB_URL` environment variable.
+/// Connects to PostgreSQL using `DB_URL` and `PLAYERS` environment variables.
+/// Constructs full database URL as `{DB_URL}/pluribus{PLAYERS}`.
 /// Returns an `Arc<Client>` suitable for sharing across async tasks.
 ///
 /// # Environment
 ///
-/// Requires `DB_URL` to be set (e.g., `postgres://user:pass@host:port/db`).
+/// Requires `DB_URL` (e.g., `postgres://user:pass@host:port`) and `PLAYERS` (2..=9).
 ///
 /// # Panics
 ///
-/// Panics if `DB_URL` is not set or if connection fails.
+/// Panics if `DB_URL` or `PLAYERS` is not set, or if connection fails.
+
+/// Establishes connections to all player databases (pluribus2..pluribus9).
+///
+/// Connects to PostgreSQL using `DB_URL` environment variable.
+/// Returns HashMap mapping player count to database client.
+///
+/// # Environment
+///
+/// Requires `DB_URL` (e.g., `postgres://user:pass@host:port`).
+///
+/// # Panics
+///
+/// Panics if `DB_URL` is not set or if any connection fails.
+pub async fn db_pool() -> std::collections::HashMap<usize, Arc<Client>> {
+    log::info!("connecting to database pool (players 2..=9)");
+    let tls = tokio_postgres::tls::NoTls;
+    let base_url = std::env::var("DB_URL").expect("DB_URL must be set");
+    let base_url = base_url.trim_end_matches('/');
+
+    let mut pool = std::collections::HashMap::new();
+
+    for players in 2..=9 {
+        let url = format!("{}/pluribus{}", base_url, players);
+        log::info!("connecting to {}", url);
+
+        let (client, connection) = tokio_postgres::connect(&url, tls)
+            .await
+            .unwrap_or_else(|e| panic!("database connection failed for {} players: {}", players, e));
+
+        tokio::spawn(connection);
+        client
+            .execute("SET client_min_messages TO WARNING", &[])
+            .await
+            .expect("set client_min_messages");
+
+        pool.insert(players, Arc::new(client));
+    }
+
+    log::info!("connected to {} databases", pool.len());
+    pool
+}
 pub async fn db() -> Arc<Client> {
     log::info!("connecting to database");
     let tls = tokio_postgres::tls::NoTls;
-    let ref url = std::env::var("DB_URL").expect("DB_URL must be set");
-    let (client, connection) = tokio_postgres::connect(url, tls)
+
+    let base_url = std::env::var("DB_URL").expect("DB_URL must be set");
+    let players = std::env::var("PLAYERS").expect("PLAYERS must be set");
+
+    let url = format!("{}/pluribus{}", base_url.trim_end_matches('/'), players);
+    let (client, connection) = tokio_postgres::connect(&url, tls)
         .await
         .expect("database connection failed");
     tokio::spawn(connection);

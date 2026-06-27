@@ -18,7 +18,7 @@ impl From<API> for CLI {
 impl CLI {
     pub async fn run() -> () {
         log::info!("entering analysis");
-        let cli = Self(API::from(rbp_database::db().await));
+        let cli = Self(API::from(rbp_database::db_pool().await));
         loop {
             print!("> ");
             let ref mut input = String::new();

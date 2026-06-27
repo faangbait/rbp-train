@@ -6,6 +6,7 @@ use rbp_mccfr::Decision;
 use rbp_nlhe::*;
 use rbp_database::*;
 use rbp_transport::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_postgres::Client;
 
@@ -54,20 +55,30 @@ fn api_strategy_from(strategy: Strategy) -> ApiStrategy {
     }
 }
 
-pub struct API(Arc<Client>);
+pub struct API(HashMap<usize, Arc<Client>>);
 
-impl From<Arc<Client>> for API {
-    fn from(client: Arc<Client>) -> Self {
-        Self(client)
+impl From<HashMap<usize, Arc<Client>>> for API {
+    fn from(pool: HashMap<usize, Arc<Client>>) -> Self {
+        Self(pool)
     }
 }
 
 impl API {
-    pub fn new(client: Arc<Client>) -> Self {
-        Self(client)
+    pub fn new(pool: HashMap<usize, Arc<Client>>) -> Self {
+        Self(pool)
     }
-    pub fn client(&self) -> &Arc<Client> {
-        &self.0
+
+    fn client(&self, players: usize) -> &Arc<Client> {
+        self.0.get(&players)
+            .unwrap_or_else(|| panic!("no database connection for {} players (must be 2..=9)", players))
+    }
+
+    #[allow(dead_code)]
+    fn default_players(&self) -> usize {
+        std::env::var("PLAYERS")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(6)  // ponytail: default to 6-player DB
     }
 }
 
@@ -81,8 +92,7 @@ impl API {
             ISOMORPHISM,
             " WHERE obs = $1"
         );
-        self.0
-            .query_one(sql, &[&idx])
+        self.client(self.default_players())            .query_one(sql, &[&idx])
             .await
             .map(|row| Abstraction::from(row.get::<_, i16>(0)))
             .map_err(|e| anyhow::anyhow!("fetch abstraction: {}", e))
@@ -94,8 +104,8 @@ impl API {
             METRIC,
             " WHERE street = $1"
         );
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&s])
             .await
             .map_err(|e| anyhow::anyhow!("fetch metric: {}", e))?;
@@ -118,8 +128,7 @@ impl API {
             ABSTRACTION,
             " WHERE abs = $1"
         );
-        self.0
-            .query_one(sql, &[&abs])
+        self.client(self.default_players())            .query_one(sql, &[&abs])
             .await
             .map(|row| Probability::from(row.get::<_, f32>(0)))
             .map_err(|e| anyhow::anyhow!("fetch abstraction equity: {}", e))
@@ -151,9 +160,8 @@ impl API {
         } else {
             other
         };
-        Ok(self
-            .0
-            .query_one(sql, &[&iso])
+        Ok(self.client(self.default_players())
+                    .query_one(sql, &[&iso])
             .await
             .map_err(|e| anyhow::anyhow!("fetch observation equity: {}", e))?
             .get::<_, f32>(0)
@@ -179,8 +187,7 @@ impl API {
         let pair = Pair::from((&abs1, &abs2));
         let tri = i32::from(pair);
         let sql = const_format::concatcp!("SELECT dx FROM ", METRIC, " WHERE tri = $1");
-        self.0
-            .query_one(sql, &[&tri])
+        self.client(self.default_players())            .query_one(sql, &[&tri])
             .await
             .map(|row| row.get::<_, Energy>(0))
             .map_err(|e| anyhow::anyhow!("fetch distance: {}", e))
@@ -213,8 +220,7 @@ impl API {
             ABSTRACTION,
             " WHERE abs = $1"
         );
-        self.0
-            .query_one(sql, &[&abs])
+        self.client(self.default_players())            .query_one(sql, &[&abs])
             .await
             .map(|row| row.get::<_, i64>(0) as usize)
             .map_err(|e| anyhow::anyhow!("fetch abstraction population: {}", e))
@@ -231,9 +237,8 @@ impl API {
             " e ON e.abs = a.abs ",
             "WHERE  e.obs = $1"
         );
-        Ok(self
-            .0
-            .query_one(sql, &[&iso])
+        Ok(self.client(self.default_players())
+                    .query_one(sql, &[&iso])
             .await
             .map_err(|e| anyhow::anyhow!("fetch observation population: {}", e))?
             .get::<_, i64>(0) as usize)
@@ -250,8 +255,8 @@ impl API {
             " WHERE prev = $1"
         );
         let street = abs.street().next();
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&abs_i])
             .await
             .map_err(|e| anyhow::anyhow!("fetch abstraction histogram: {}", e))?;
@@ -279,9 +284,8 @@ impl API {
             "WHERE  e.obs = $1"
         );
         let street = obs.street().next();
-        Ok(self
-            .0
-            .query(sql, &[&idx])
+        Ok(self.client(self.default_players())
+                    .query(sql, &[&idx])
             .await
             .map_err(|e| anyhow::anyhow!("fetch observation histogram: {}", e))?
             .iter()
@@ -316,8 +320,8 @@ impl API {
         );
         let n = obs.street().n_observations() as f32;
         let iso = i64::from(Isomorphism::from(obs));
-        let row = self
-            .0
+        let row = self.client(self.default_players())
+
             .query_one(sql, &[&iso, &n])
             .await
             .map_err(|e| anyhow::anyhow!("explore with respect to observation: {}", e))?;
@@ -347,8 +351,8 @@ impl API {
         );
         let n = abs.street().n_isomorphisms() as f32;
         let abs = i16::from(abs);
-        let row = self
-            .0
+        let row = self.client(self.default_players())
+
             .query_one(sql, &[&abs, &n])
             .await
             .map_err(|e| anyhow::anyhow!("explore with respect to abstraction: {}", e))?;
@@ -373,9 +377,8 @@ impl API {
             "ORDER BY m.dx ASC ",
             "LIMIT    $2"
         );
-        Ok(self
-            .0
-            .query(sql, &[&abs, &N_NEIGHBORS])
+        Ok(self.client(self.default_players())
+                    .query(sql, &[&abs, &N_NEIGHBORS])
             .await
             .map_err(|e| anyhow::anyhow!("fetch nearby abstractions: {}", e))?
             .iter()
@@ -402,9 +405,8 @@ impl API {
             "ORDER BY m.dx ASC ",
             "LIMIT    $2"
         );
-        Ok(self
-            .0
-            .query(sql, &[&iso, &N_NEIGHBORS])
+        Ok(self.client(self.default_players())
+                    .query(sql, &[&iso, &N_NEIGHBORS])
             .await
             .map_err(|e| anyhow::anyhow!("fetch nearby abstractions for observation: {}", e))?
             .iter()
@@ -439,9 +441,8 @@ impl API {
             "AND      e.position >= FLOOR(RANDOM() * GREATEST(t.population - $2, 1)) ",
             "LIMIT    $2"
         );
-        Ok(self
-            .0
-            .query(sql, &[&iso, &N_NEIGHBORS])
+        Ok(self.client(self.default_players())
+                    .query(sql, &[&iso, &N_NEIGHBORS])
             .await
             .map_err(|e| anyhow::anyhow!("fetch similar observations: {}", e))?
             .iter()
@@ -468,9 +469,8 @@ impl API {
             "AND      e.position >= FLOOR(RANDOM() * GREATEST(t.population - $2, 1)) ",
             "LIMIT    $2"
         );
-        Ok(self
-            .0
-            .query(sql, &[&abs, &N_NEIGHBORS])
+        Ok(self.client(self.default_players())
+                    .query(sql, &[&abs, &N_NEIGHBORS])
             .await
             .map_err(|e| anyhow::anyhow!("fetch observations similar to abstraction: {}", e))?
             .iter()
@@ -500,8 +500,8 @@ impl API {
             "LIMIT  1"
         );
         let iso = i64::from(Isomorphism::from(obs));
-        let row = self
-            .0
+        let row = self.client(self.default_players())
+
             .query_one(sql, &[&iso])
             .await
             .map_err(|e| anyhow::anyhow!("replace observation: {}", e))?;
@@ -565,8 +565,8 @@ impl API {
         let n = wrt.street().n_isomorphisms() as f32;
         let abs = i16::from(abs);
         let wrt = i16::from(wrt);
-        let row = self
-            .0
+        let row = self.client(self.default_players())
+
             .query_one(sql, &[&abs, &n, &wrt])
             .await
             .map_err(|e| anyhow::anyhow!("fetch neighbor abstraction: {}", e))?;
@@ -602,8 +602,8 @@ impl API {
         let n = wrt.street().n_isomorphisms() as f32;
         let iso = i64::from(Isomorphism::from(obs));
         let wrt = i16::from(wrt);
-        let row = self
-            .0
+        let row = self.client(self.default_players())
+
             .query_one(sql, &[&iso, &n, &wrt])
             .await
             .map_err(|e| anyhow::anyhow!("fetch neighbor observation: {}", e))?;
@@ -648,8 +648,8 @@ impl API {
         let n = wrt.street().n_isomorphisms() as f32;
         let s = wrt.street() as i16;
         let wrt = i16::from(wrt);
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&wrt, &s, &N_NEIGHBORS, &n])
             .await
             .map_err(|e| anyhow::anyhow!("fetch k-farthest neighbors: {}", e))?;
@@ -690,8 +690,8 @@ impl API {
         let n = wrt.street().n_isomorphisms() as f32;
         let s = wrt.street() as i16;
         let wrt = i16::from(wrt);
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&wrt, &s, &N_NEIGHBORS, &n])
             .await
             .map_err(|e| anyhow::anyhow!("fetch k-nearest neighbors: {}", e))?;
@@ -732,8 +732,8 @@ impl API {
             .collect::<Vec<_>>();
         let n = wrt.street().n_isomorphisms() as f32;
         let wrt = i16::from(wrt);
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&n, &wrt, &&isos, &N_NEIGHBORS])
             .await
             .map_err(|e| anyhow::anyhow!("fetch given neighbors: {}", e))?;
@@ -783,8 +783,8 @@ impl API {
             "FROM   sample s"
         );
         let iso = i64::from(Isomorphism::from(obs));
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&iso])
             .await
             .map_err(|e| anyhow::anyhow!("fetch river observation distribution: {}", e))?;
@@ -805,8 +805,8 @@ impl API {
             "WHERE  e.obs = $1"
         );
         let iso = i64::from(Isomorphism::from(obs));
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[&iso])
             .await
             .map_err(|e| anyhow::anyhow!("fetch observation distribution: {}", e))?;
@@ -835,8 +835,8 @@ impl API {
             " e ON e.abs = s.abs AND e.position = s.position"
         );
         let ref abs = i16::from(abs);
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[abs])
             .await
             .map_err(|e| anyhow::anyhow!("fetch river abstraction distribution: {}", e))?;
@@ -869,8 +869,8 @@ impl API {
             "ORDER BY t.probability DESC"
         );
         let ref abs = i16::from(abs);
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
+
             .query(sql, &[abs])
             .await
             .map_err(|e| anyhow::anyhow!("fetch abstraction distribution: {}", e))?;
@@ -898,8 +898,7 @@ impl API {
         let ref history = i64::from(info.subgame());
         let ref present = i16::from(info.bucket());
         let ref choices = i64::from(info.choices());
-        let rows = self
-            .0
+        let rows = self.client(self.default_players())
             .query(sql, &[history, present, choices])
             .await
             .map_err(|e| anyhow::anyhow!("fetch policy: {}", e))?;

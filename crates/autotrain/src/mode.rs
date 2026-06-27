@@ -31,8 +31,7 @@ impl Mode {
                     "Usage: trainer --status | --initialize | --cluster | --fast | --slow | --reset"
                 );
                 eprintln!(
-                    "Env: DB_URL (required, e.g. .../{}), PLAYERS (required, 2..=9)",
-                    database_name(3)
+                    "Env: DB_URL (required, e.g. postgres://host), PLAYERS (required, 2..=9)",
                 );
                 std::process::exit(1);
             })
@@ -69,9 +68,8 @@ impl Mode {
         match initialize::stored_players(client).await {
             Some(stored) if stored == players => {}
             Some(stored) => {
-                eprintln!(
-                    "database stamped for {stored} players but PLAYERS={players}; use DB_URL=.../{} or re-run --initialize",
-                    database_name(players)
+                    eprintln!(
+                    "database stamped for {stored} players but PLAYERS={players}; re-run --initialize",
                 );
                 std::process::exit(1);
             }

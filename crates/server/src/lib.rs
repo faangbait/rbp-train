@@ -28,22 +28,31 @@ use actix_web::web;
 use std::sync::Arc;
 use tokio_postgres::Client;
 
-async fn health(client: web::Data<Arc<Client>>) -> impl Responder {
-    match client
-        .execute("SELECT 1", &[])
-        .await
-        .inspect_err(|e| log::error!("health check failed: {}", e))
-    {
-        Ok(_) => HttpResponse::Ok().body("ok"),
-        Err(_) => HttpResponse::ServiceUnavailable().body("database unavailable"),
+async fn health(
+    pool: web::Data<std::collections::HashMap<usize, Arc<Client>>>,
+) -> impl Responder {
+    // Check 6-player DB (default)
+    match pool.get(&6) {
+        Some(client) => match client.execute("SELECT 1", &[]).await {
+            Ok(_) => HttpResponse::Ok().body("ok"),
+            Err(e) => {
+                log::error!("health check failed: {}", e);
+                HttpResponse::ServiceUnavailable().body("database unavailable")
+            }
+        },
+        None => HttpResponse::ServiceUnavailable().body("6-player database not connected"),
     }
 }
 
 #[rustfmt::skip]
 pub async fn run() -> Result<(), std::io::Error> {
-    let client = rbp_database::db().await;
-    let api = web::Data::new(analysis::API::new(client.clone()));
+    let db_pool = rbp_database::db_pool().await;
+    let pool_data = web::Data::new(db_pool.clone());
+    let api = web::Data::new(analysis::API::new(db_pool.clone()));
     let crypto = web::Data::new(rbp_auth::Crypto::from_env());
+
+    // ponytail: use 6-player DB for hosting (default)
+    let client = db_pool.get(&6).expect("6-player database must exist").clone();
     let casino = web::Data::new(hosting::Casino::new(client.clone()));
     let client = web::Data::new(client);
     log::info!("starting unified server");
@@ -59,6 +68,7 @@ pub async fn run() -> Result<(), std::io::Error> {
             .app_data(api.clone())
             .app_data(casino.clone())
             .app_data(crypto.clone())
+            .app_data(pool_data.clone())
             .app_data(client.clone())
             .route("/health", web::get().to(health))
             .service(
