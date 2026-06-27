@@ -141,9 +141,14 @@ impl<const K: usize, const N: usize> Elkan<K, N> for Layer<K, N> {
         let mut potentials = vec![1.; N];
         let mut histograms = Vec::with_capacity(K);
         while histograms.len() < K {
-            let i = WeightedIndex::new(potentials.iter())
-                .expect("valid weights array")
-                .sample(rng);
+            let i = match WeightedIndex::new(potentials.iter()) {
+                Ok(wi) => wi.sample(rng),
+                Err(_) => {
+                    // All weights zero: remaining histograms identical to selected centroids.
+                    // Pick first unselected index as fallback.
+                    (0..N).find(|&j| !histograms.contains(&self.points()[j])).expect("K <= N")
+                }
+            };
             let x = self.points()[i];
             histograms.push(x);
             potentials[i] = 0.;
